@@ -1,0 +1,333 @@
+---
+date: "2020-06-18T00:00:00Z"
+draft: false
+lastmod: "2020-06-18T00:00:00Z"
+linktitle: Maps
+menu:
+  Maps:
+    name: Maps
+    weight: 1
+title: Maps
+weight: 3
+tags:
+- "Course Projects"
+---
+
+
+```{r, include=FALSE}
+library(tidyverse)
+library(sf)
+library(sp)
+library(osmdata)
+library(ggmap)
+library(readxl)
+library(classInt)
+library(cowplot)
+library(maps)
+library(ggspatial)
+library(here)
+```
+
+
+
+```{r, include=FALSE}
+trees_shape<-st_read(here("Parks_Tree_Inventory-shp"))
+st_crs(trees_shape)
+trees_shape$geometry
+trees_shape %>% ggplot()+geom_sf()
+pdx_boundaries<-st_read(here("Neighborhoods__Regions_-shp"))
+river_boundaries<-st_read(here("Willamette_Columbia_River_Ordinary_High_Water-shp"))
+pdx_boundaries$geometry
+pdx_boundaries %>% ggplot()+geom_sf()+geom_sf_label(aes(label=MAPLABEL))
+pdx_boundaries %>% ggplot()+geom_sf()+coord_sf(xlim=c(-13670000, -13630000), ylim=c(5690000, 5710000))
+st_crs(pdx_boundaries)
+
+farmers_market<-st_read(here("Farmers_Markets-shp"))
+grocery_stores<-st_read(here("Grocery_Stores-shp"))
+```
+
+
+
+## **Map for grocery stores and farmers markets in Downtown Portland**
+```{r, echo=FALSE, message=FALSE}
+
+shapes=c(21, 24)
+pdx_boundaries %>% ggplot()+geom_sf()+geom_sf(data=river_boundaries, fill="blue", size=0)+geom_sf(data=farmers_market, shape=1, aes(color="Farmer's Market"))+ggtitle("Portland Farmer's Markets")+theme_minimal()+
+  geom_sf(data=grocery_stores, shape=24, aes(fill="Grocery Store"), alpha=0.6)+scale_fill_manual(name="", values=c("Grocery Store"="orchid"))+
+  scale_color_manual(name="", values=c("Farmer's Market"="green"))
+  
+```
+  
+&nbsp;
+
+## **OpenStreetMap tiles showing tree sizes**
+```{r, include=FALSE}
+trees_in_park<-st_crop(trees_shape, xmin=-13666137, ymin=5714252, xmax=-13665247, ymax=5714729)
+paste0("Nmuber of Trees in our bounding box:", length(trees_in_park$geometry))
+st_bbox(trees_in_park)
+park_base_map<-get_stamenmap(c(left=-122.765, bottom=45.586, right=-122.757, top=45.589), zoom=16, maptype = "terrain")
+ggmap(park_base_map)
+trees_park_projected<-st_transform(trees_in_park, sf::st_crs(4326))
+```
+
+```{r, echo=FALSE, message=FALSE}
+ggplot()+annotation_map_tile(type="osm")+layer_spatial(trees_in_park, mapping=aes(color=Size), alpha=1, shape=21)
+```
+  
+&nbsp;
+
+## **Choropleth Map using 2010 Census data from Portland**
+### Housing Density in Portland using 4 methods  
+1. Equal spacing for housing density **(housing.equal)**
+2. Quantile spacing for equal numner of neighborhoods **(housing.quantile)**
+3. A simple breaking scheme reflecting the data’s variability **(housing.equal)**
+4. Jenks’ algorithm: A more sophisticated adaptive scheme for “natural” breaks in the range of data **(housing.jenks)**
+
+```{r, include=FALSE}
+pdx_housing<-read_excel(here("content/project/Course_Projects/Maps","Census_2010_Data_Cleanedup.xlsx"), sheet="Census_2010_Neighborhoods", range="A7:CJ101", col_names = F)
+
+pdx_housing<-pdx_housing[,c(1,88)]
+colnames(pdx_housing)<-c("Neighborhood", "Total.Housing")
+pdx_housing<-pdx_housing %>% 
+  mutate(Neighborhood=recode(Neighborhood, 
+  "ARGAY" = "ARGAY TERRACE",
+  "BROOKLYN" = "BROOKLYN ACTION CORPS",
+  "BUCKMAN" = "BUCKMAN COMMUNITY ASSOCIATION",
+  "CENTENNIAL" = "CENTENNIAL COMMUNITY ASSOCIATION",
+  "CULLY" = "CULLY ASSOCIATION OF NEIGHBORS",
+  "CENTENNIAL" = "CENTENNIAL COMMUNITY ASSOCIATION",
+  "DOWNTOWN" = "PORTLAND DOWNTOWN",
+  "GOOSE HOLLOW" = "GOOSE HOLLOW FOOTHILLS LEAGUE",
+  "HAYDEN ISLAND" = "HAYDEN ISLAND NEIGHBORHOOD NETWORK",
+  "HOSFORD-ABERNETHY" = "HOSFORD-ABERNETHY NEIGHBORHOOD DISTRICT ASSN.",
+  "IRVINGTON" = "IRVINGTON COMMUNITY ASSOCIATION",
+  "LLOYD DISTRICT" = "LLOYD DISTRICT COMMUNITY ASSOCIATION",
+  "NORTHWEST DISTRICT" = "NORTHWEST DISTRICT ASSOCIATION",
+  "OLD TOWN-CHINATOWN" = "OLD TOWN COMMUNITY ASSOCIATION",
+  "PARKROSE HEIGHTS" = "PARKROSE HEIGHTS ASSOCIATION OF NEIGHBORS",
+  "PEARL" = "PEARL DISTRICT",
+  "SABIN" = "SABIN COMMUNITY ASSOCIATION",
+  "SELLWOOD-MORELAND" = "SELLWOOD-MORELAND IMPROVEMENT LEAGUE",
+  "SOUTHWEST HILLS" = "SOUTHWEST HILLS RESIDENTIAL LEAGUE",
+  "SUMNER" = "SUMNER ASSOCIATION OF NEIGHBORS",
+  "SUNDERLAND" = "SUNDERLAND ASSOCIATION OF NEIGHBORS",
+  "WILKES" = "WILKES COMMUNITY GROUP"))
+
+boundaries_with_housing<-left_join(pdx_boundaries, pdx_housing, by=c("NAME"="Neighborhood"))
+
+boundaries_with_housing<-boundaries_with_housing %>% 
+  mutate(adj_housing=(Total.Housing/(Shape_Area/1E6))) %>% arrange(adj_housing)
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+min.housing<-min(boundaries_with_housing$adj_housing, na.rm=TRUE)
+max.housing<-max(boundaries_with_housing$adj_housing, na.rm=TRUE)
+diff.housing<-max.housing-min.housing
+std.dev.housing<-sd(boundaries_with_housing$adj_housing, na.rm=TRUE)
+
+equal.interval<-seq(min.housing, max.housing, by=diff.housing/5)
+quantile.interval<-quantile(boundaries_with_housing$adj_housing, probs=seq(0,1,by=1/5), na.rm=T)
+std.interval<-seq(min.housing, max.housing, by=std.dev.housing)
+jenks.interval<-classIntervals(boundaries_with_housing$adj_housing, n=5, style='jenks')$brks
+
+boundaries_with_housing$housing.equal=cut(boundaries_with_housing$adj_housing, breaks = equal.interval, include.lowest = T)
+boundaries_with_housing$housing.quantile=cut(boundaries_with_housing$adj_housing, breaks= quantile.interval, include.lowest = T)
+boundaries_with_housing$housing.std=cut(boundaries_with_housing$adj_housing, breaks=std.interval, include.lowest = T)
+boundaries_with_housing$housing.jenks=cut(boundaries_with_housing$adj_housing, breaks=jenks.interval, include.lowest = T)
+
+housing_dens_bar_chart<-function(break_col){
+  boundaries_with_housing %>% 
+    filter(!is.na(adj_housing)) %>% 
+  ggplot(mapping=aes(x=fct_reorder(MAPLABEL, -adj_housing), y=adj_housing))+
+  geom_col(aes(fill=.data[[break_col]]))+
+    theme(axis.text.x=element_blank(), axis.ticks.x=element_blank())+
+    labs(y=expression("Housing/km"^2), x="")+
+    scale_fill_discrete(guide=F)+
+    ggtitle(break_col)
+}
+
+plot_grid(housing_dens_bar_chart("housing.equal"),
+housing_dens_bar_chart("housing.quantile"),
+housing_dens_bar_chart("housing.std"),
+housing_dens_bar_chart("housing.jenks"),
+nrow=2, ncol=2)
+
+map_series<-function(x){
+  boundaries_with_housing %>% ggplot()+
+  geom_sf(aes(fill=.data[[x]]))+
+  geom_sf(data=river_boundaries, fill="blue", size=0)+
+  scale_fill_discrete(name="Housing/km^2")+
+  scale_fill_brewer(palette = 2)+
+    ggtitle(x)+
+    labs(fill="Housing/km^2")
+}
+
+map_series("housing.equal")
+map_series("housing.quantile")
+map_series("housing.std")
+map_series("housing.jenks")
+         
+         
+```
+  
+*I tried with 4 and 5 bins respectively for housing density and 5 seems a more reasonable choice, especially for standard deviation method and jenks method. The jenks method with 5 number of bins seems to work best.*  
+&nbsp;
+
+## **Method**
+```{r, eval=FALSE}
+library(tidyverse)
+library(sf)
+library(sp)
+library(tmap)
+library(osmdata)
+library(ggmap)
+library(readxl)
+library(classInt)
+library(cowplot)
+library(maps)
+library(ggspatial)
+library(here)
+```
+
+
+
+```{r, eval=FALSE}
+trees_shape<-st_read(here("content/project/Course_Projects/Maps", "Parks_Tree_Inventory-shp"))
+st_crs(trees_shape)
+trees_shape$geometry
+trees_shape %>% ggplot()+geom_sf()
+pdx_boundaries<-st_read(here("content/project/Course_Projects/Maps","Neighborhoods__Regions_-shp"))
+river_boundaries<-st_read(here("content/project/Course_Projects/Maps","Willamette_Columbia_River_Ordinary_High_Water-shp"))
+pdx_boundaries$geometry
+pdx_boundaries %>% ggplot()+geom_sf()+geom_sf_label(aes(label=MAPLABEL))
+pdx_boundaries %>% ggplot()+geom_sf()+coord_sf(xlim=c(-13670000, -13630000), ylim=c(5690000, 5710000))
+st_crs(pdx_boundaries)
+
+farmers_market<-st_read(here("content/project/Course_Projects/Maps","Farmers_Markets-shp"))
+grocery_stores<-st_read(here("content/project/Course_Projects/Maps","Grocery_Stores-shp"))
+```
+  
+&nbsp;
+
+### Map for grocery stores and farmers markets in Portland Downtown
+```{r, eval=FALSE}
+
+shapes=c(21, 24)
+pdx_boundaries %>% ggplot()+geom_sf()+geom_sf(data=river_boundaries, fill="blue", size=0)+geom_sf(data=farmers_market, shape=1, aes(color="Farmer's Market"))+ggtitle("Portland Farmer's Markets")+theme_minimal()+
+  geom_sf(data=grocery_stores, shape=24, aes(fill="Grocery Store"), alpha=0.6)+scale_fill_manual(name="", values=c("Grocery Store"="orchid"))+
+  scale_color_manual(name="", values=c("Farmer's Market"="green"))
+  
+```
+  
+&nbsp;
+
+### OpenStreetMap tiles showing tree sizes
+```{r, eval=FALSE}
+trees_in_park<-st_crop(trees_shape, xmin=-13666137, ymin=5714252, xmax=-13665247, ymax=5714729)
+paste0("Nmuber of Trees in our bounding box:", length(trees_in_park$geometry))
+st_bbox(trees_in_park)
+park_base_map<-get_stamenmap(c(left=-122.765, bottom=45.586, right=-122.757, top=45.589), zoom=16, maptype = "terrain")
+ggmap(park_base_map)
+trees_park_projected<-st_transform(trees_in_park, sf::st_crs(4326))
+```
+
+```{r, eval=FALSE}
+ggplot()+annotation_map_tile(type="osm")+layer_spatial(trees_in_park, mapping=aes(color=Size), alpha=1, shape=21)
+```
+  
+&nbsp;
+
+### Choropleth Map using 2010 Census data from Portland
+#### Housing Density in Portland using 4 methods  
+
+
+```{r, eval=FALSE}
+pdx_housing<-read_excel(here("content/project/Course_Projects/Maps","Census_2010_Data_Cleanedup.xlsx"), sheet="Census_2010_Neighborhoods", range="A7:CJ101", col_names = F)
+
+pdx_housing<-pdx_housing[,c(1,88)]
+colnames(pdx_housing)<-c("Neighborhood", "Total.Housing")
+pdx_housing<-pdx_housing %>% 
+  mutate(Neighborhood=recode(Neighborhood, 
+  "ARGAY" = "ARGAY TERRACE",
+  "BROOKLYN" = "BROOKLYN ACTION CORPS",
+  "BUCKMAN" = "BUCKMAN COMMUNITY ASSOCIATION",
+  "CENTENNIAL" = "CENTENNIAL COMMUNITY ASSOCIATION",
+  "CULLY" = "CULLY ASSOCIATION OF NEIGHBORS",
+  "CENTENNIAL" = "CENTENNIAL COMMUNITY ASSOCIATION",
+  "DOWNTOWN" = "PORTLAND DOWNTOWN",
+  "GOOSE HOLLOW" = "GOOSE HOLLOW FOOTHILLS LEAGUE",
+  "HAYDEN ISLAND" = "HAYDEN ISLAND NEIGHBORHOOD NETWORK",
+  "HOSFORD-ABERNETHY" = "HOSFORD-ABERNETHY NEIGHBORHOOD DISTRICT ASSN.",
+  "IRVINGTON" = "IRVINGTON COMMUNITY ASSOCIATION",
+  "LLOYD DISTRICT" = "LLOYD DISTRICT COMMUNITY ASSOCIATION",
+  "NORTHWEST DISTRICT" = "NORTHWEST DISTRICT ASSOCIATION",
+  "OLD TOWN-CHINATOWN" = "OLD TOWN COMMUNITY ASSOCIATION",
+  "PARKROSE HEIGHTS" = "PARKROSE HEIGHTS ASSOCIATION OF NEIGHBORS",
+  "PEARL" = "PEARL DISTRICT",
+  "SABIN" = "SABIN COMMUNITY ASSOCIATION",
+  "SELLWOOD-MORELAND" = "SELLWOOD-MORELAND IMPROVEMENT LEAGUE",
+  "SOUTHWEST HILLS" = "SOUTHWEST HILLS RESIDENTIAL LEAGUE",
+  "SUMNER" = "SUMNER ASSOCIATION OF NEIGHBORS",
+  "SUNDERLAND" = "SUNDERLAND ASSOCIATION OF NEIGHBORS",
+  "WILKES" = "WILKES COMMUNITY GROUP"))
+
+boundaries_with_housing<-left_join(pdx_boundaries, pdx_housing, by=c("NAME"="Neighborhood"))
+
+boundaries_with_housing<-boundaries_with_housing %>% 
+  mutate(adj_housing=(Total.Housing/(Shape_Area/1E6))) %>% arrange(adj_housing)
+
+```
+
+
+```{r, eval=FALSE}
+min.housing<-min(boundaries_with_housing$adj_housing, na.rm=TRUE)
+max.housing<-max(boundaries_with_housing$adj_housing, na.rm=TRUE)
+diff.housing<-max.housing-min.housing
+std.dev.housing<-sd(boundaries_with_housing$adj_housing, na.rm=TRUE)
+
+equal.interval<-seq(min.housing, max.housing, by=diff.housing/5)
+quantile.interval<-quantile(boundaries_with_housing$adj_housing, probs=seq(0,1,by=1/5), na.rm=T)
+std.interval<-seq(min.housing, max.housing, by=std.dev.housing)
+jenks.interval<-classIntervals(boundaries_with_housing$adj_housing, n=5, style='jenks')$brks
+
+boundaries_with_housing$housing.equal=cut(boundaries_with_housing$adj_housing, breaks = equal.interval, include.lowest = T)
+boundaries_with_housing$housing.quantile=cut(boundaries_with_housing$adj_housing, breaks= quantile.interval, include.lowest = T)
+boundaries_with_housing$housing.std=cut(boundaries_with_housing$adj_housing, breaks=std.interval, include.lowest = T)
+boundaries_with_housing$housing.jenks=cut(boundaries_with_housing$adj_housing, breaks=jenks.interval, include.lowest = T)
+
+housing_dens_bar_chart<-function(break_col){
+  boundaries_with_housing %>% 
+    filter(!is.na(adj_housing)) %>% 
+  ggplot(mapping=aes(x=fct_reorder(MAPLABEL, -adj_housing), y=adj_housing))+
+  geom_col(aes(fill=.data[[break_col]]))+
+    theme(axis.text.x=element_blank(), axis.ticks.x=element_blank())+
+    labs(y=expression("Housing/km"^2), x="")+
+    scale_fill_discrete(guide=F)+
+    ggtitle(break_col)
+}
+
+plot_grid(housing_dens_bar_chart("housing.equal"),
+housing_dens_bar_chart("housing.quantile"),
+housing_dens_bar_chart("housing.std"),
+housing_dens_bar_chart("housing.jenks"),
+nrow=2, ncol=2)
+
+map_series<-function(x){
+  boundaries_with_housing %>% ggplot()+
+  geom_sf(aes(fill=.data
+  scale_fill_brewer(palette = 2)+
+    ggtitle(x)+
+    labs(fill="Housing/km^2")
+}
+
+map_series("housing.equal")
+map_series("housing.quantile")
+map_series("housing.std")
+map_series("housing.jenks")
+```
+  
+[[x]]))+
+  geom_sf(data=river_boundaries, fill="blue", size=0)+
+  scale_fill_discrete(name="Housing/km^2")+
